@@ -1,0 +1,919 @@
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+
+# --- HyperMorphic Arithmetic (Simplified for MGH) ---
+def add_H(a, b):
+    raw_sum = a + b
+    magnitude = np.linalg.norm(raw_sum)
+    scaling_factor = 1 / (1 + 0.1 * magnitude)
+    return raw_sum * scaling_factor
+
+# --- Benchmark Function: Rastrigin (Corrected Vectorized Version) ---
+def rastrigin(w):
+    w = np.asarray(w)
+    A = 10
+    return A * w.shape[-1] + np.sum(w**2 - A * np.cos(2 * np.pi * w), axis=-1)
+
+# --- Algorithm Implementations ---
+
+# 1. Particle Swarm Optimization (PSO)
+class PSO:
+    def __init__(self, cost_func, n_particles, n_dims, search_range):
+        self.cost_func = cost_func
+        self.w, self.c1, self.c2 = 0.5, 1.5, 1.5
+        self.swarm = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.velocities = np.zeros_like(self.swarm)
+        self.p_best_pos = self.swarm.copy()
+        self.p_best_val = self.cost_func(self.swarm)
+        self.g_best_pos = self.p_best_pos[np.argmin(self.p_best_val)]
+        self.g_best_val = np.min(self.p_best_val)
+        self.history = []
+
+    def optimize(self, max_iters):
+        for _ in range(max_iters):
+            r1, r2 = np.random.rand(2)
+            self.velocities = (self.w * self.velocities +
+                             self.c1 * r1 * (self.p_best_pos - self.swarm) +
+                             self.c2 * r2 * (self.g_best_pos - self.swarm))
+            self.swarm += self.velocities
+            current_costs = self.cost_func(self.swarm)
+            update_indices = current_costs < self.p_best_val
+            self.p_best_pos[update_indices] = self.swarm[update_indices]
+            self.p_best_val[update_indices] = current_costs[update_indices]
+            if np.min(current_costs) < self.g_best_val:
+                self.g_best_val = np.min(current_costs)
+                self.g_best_pos = self.swarm[np.argmin(current_costs)]
+            self.history.append(self.g_best_val)
+        return self.g_best_val
+
+# 2. Genetic Algorithm (GA)
+class GA:
+    def __init__(self, cost_func, n_particles, n_dims, search_range, mutation_rate=0.05, crossover_rate=0.8):
+        self.cost_func = cost_func
+        self.n_dims = n_dims
+        self.search_range = search_range
+        self.mutation_rate = mutation_rate
+        self.crossover_rate = crossover_rate
+        self.population = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.history = []
+        self.g_best_val = float('inf')
+
+    def optimize(self, max_iters):
+        for _ in range(max_iters):
+            fitness = self.cost_func(self.population)
+            if np.min(fitness) < self.g_best_val:
+                self.g_best_val = np.min(fitness)
+            self.history.append(self.g_best_val)
+            
+            new_population = []
+            for _ in range(len(self.population)):
+                i, j = np.random.choice(len(self.population), 2, replace=False)
+                winner = self.population[i] if fitness[i] < fitness[j] else self.population[j]
+                new_population.append(winner)
+            self.population = np.array(new_population)
+            
+            for i in range(0, len(self.population), 2):
+                if np.random.rand() < self.crossover_rate:
+                    p1, p2 = self.population[i], self.population[i+1]
+                    mask = np.random.rand(self.n_dims) > 0.5
+                    c1, c2 = np.where(mask, p1, p2), np.where(mask, p2, p1)
+                    self.population[i], self.population[i+1] = c1, c2
+            
+            mutation_mask = np.random.rand(*self.population.shape) < self.mutation_rate
+            mutation_values = np.random.normal(0, 0.5, self.population.shape)
+            self.population[mutation_mask] += mutation_values[mutation_mask]
+            self.population = np.clip(self.population, self.search_range[0], self.search_range[1])
+        return self.g_best_val
+
+# 3. Differential Evolution (DE)
+class DE:
+    def __init__(self, cost_func, n_particles, n_dims, search_range, F=0.8, CR=0.9):
+        self.cost_func = cost_func
+        self.n_dims = n_dims
+        self.search_range = search_range
+        self.F, self.CR = F, CR
+        self.population = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.history = []
+        self.g_best_val = float('inf')
+
+    def optimize(self, max_iters):
+        for _ in range(max_iters):
+            fitness = self.cost_func(self.population)
+            if np.min(fitness) < self.g_best_val:
+                self.g_best_val = np.min(fitness)
+            self.history.append(self.g_best_val)
+
+            for i in range(len(self.population)):
+                idxs = [idx for idx in range(len(self.population)) if idx != i]
+                a, b, c = self.population[np.random.choice(idxs, 3, replace=False)]
+                mutant = np.clip(a + self.F * (b - c), self.search_range[0], self.search_range[1])
+                cross_points = np.random.rand(self.n_dims) < self.CR
+                trial = np.where(cross_points, mutant, self.population[i])
+                if self.cost_func(trial) < fitness[i]:
+                    self.population[i] = trial
+        return self.g_best_val
+
+# 4. Morphic Genetic Hybrid v5 (MGH-T5 - The Symbiote)
+class MGH_T5:
+    def __init__(self, cost_func, n_particles, n_dims, search_range):
+        self.cost_func = cost_func
+        self.n_dims = n_dims
+        self.search_range = search_range
+        self.n_particles = n_particles
+        
+        # Population state
+        self.population = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.fitness = self.cost_func(self.population)
+        self.g_best_pos = self.population[np.argmin(self.fitness)].copy()
+        self.g_best_val = np.min(self.fitness)
+        
+        # Sub-population roles
+        self.roles = np.array(['Morphic'] * (n_particles // 2) + ['Genetic'] * (n_particles - n_particles // 2))
+        np.random.shuffle(self.roles)
+        
+        # Morphic-specific attributes
+        self.velocities = np.zeros_like(self.population)
+        self.phases = np.array(['Standard'] * n_particles)
+        self.stress_vectors = np.zeros((n_particles, 3))
+        self.core_lifetime = np.zeros(n_particles)
+        
+        # Genetic-specific attributes
+        self.mutation_rate = 0.05
+        self.crossover_rate = 0.8
+        
+        self.history = []
+
+    def optimize(self, max_iters):
+        for t in range(max_iters):
+            self._run_morphic_step()
+            self._run_genetic_step()
+            self._cross_pollinate()
+            
+            # Update global best
+            current_best_fitness = np.min(self.fitness)
+            if current_best_fitness < self.g_best_val:
+                self.g_best_val = current_best_fitness
+                self.g_best_pos = self.population[np.argmin(self.fitness)].copy()
+            
+            self.history.append(self.g_best_val)
+        return self.g_best_val
+
+    def _run_morphic_step(self):
+        morphic_indices = np.where(self.roles == 'Morphic')[0]
+        if len(morphic_indices) == 0: return
+
+        # Update stress and phases for morphic nodes
+        core_nodes = self.population[self.phases == 'Core']
+        for i in morphic_indices:
+            if self.phases[i] == 'Standard':
+                distances = np.linalg.norm(self.population - self.population[i], axis=1)
+                self.stress_vectors[i, 0] += 1.0 / (1.0 + np.mean(np.sort(distances)[1:6]))
+                perturbed = self.population[i] + (np.random.rand(self.n_dims) - 0.5) * 0.01
+                self.stress_vectors[i, 1] += abs(self.cost_func(self.population[i]) - self.cost_func(perturbed))
+        
+        beta_crit, mu_crit = np.percentile(self.stress_vectors[morphic_indices, 0], 85), np.percentile(self.stress_vectors[morphic_indices, 1], 90)
+        for i in morphic_indices:
+            if self.phases[i] == 'Standard':
+                if self.stress_vectors[i, 0] > beta_crit and np.sum(self.phases == 'Core') < 5: self.phases[i], self.core_lifetime[i] = 'Core', 5
+                elif self.stress_vectors[i, 1] > mu_crit: self.phases[i] = 'Fire'
+        
+        core_center = np.mean(core_nodes, axis=0) if len(core_nodes) > 0 else self.g_best_pos
+        swarm_center = np.mean(self.population[morphic_indices], axis=0)
+
+        for i in morphic_indices:
+            if self.phases[i] == 'Core': self.velocities[i] *= 0.1
+            elif self.phases[i] == 'Fire':
+                direction = self.population[i] - swarm_center
+                norm = np.linalg.norm(direction)
+                if norm < 1e-6: direction = np.random.rand(self.n_dims) - 0.5; norm = np.linalg.norm(direction)
+                self.velocities[i] = (direction / (norm + 1e-8)) * np.random.uniform(3, 6)
+            else: # Standard
+                inertia = 0.4 * self.velocities[i]
+                pull_gbest = 1.0 * np.random.rand() * (self.g_best_pos - self.population[i])
+                pull_cores = 1.5 * np.random.rand() * (core_center - self.population[i])
+                self.velocities[i] = add_H(inertia, add_H(pull_gbest, pull_cores))
+            
+            self.population[i] += self.velocities[i]
+        
+        self.phases[self.core_lifetime > 0] = 'Core'
+        self.core_lifetime -= 1
+        self.phases[self.core_lifetime <= 0] = 'Standard'
+        self.stress_vectors.fill(0)
+
+    def _run_genetic_step(self):
+        genetic_indices = np.where(self.roles == 'Genetic')[0]
+        if len(genetic_indices) == 0: return
+        
+        sub_pop = self.population[genetic_indices]
+        sub_fitness = self.fitness[genetic_indices]
+        
+        new_sub_pop = [self.g_best_pos.copy()] # Elitism
+        for _ in range(len(sub_pop) - 1):
+            i, j = np.random.choice(len(sub_pop), 2, replace=False)
+            winner = sub_pop[i] if sub_fitness[i] < sub_fitness[j] else sub_pop[j]
+            new_sub_pop.append(winner)
+        sub_pop = np.array(new_sub_pop)
+        
+        for i in range(1, len(sub_pop)):
+            if np.random.rand() < self.crossover_rate:
+                p1, p2 = sub_pop[i], sub_pop[np.random.randint(1, len(sub_pop))]
+                mask = np.random.rand(self.n_dims) > 0.5
+                sub_pop[i] = np.where(mask, p1, p2)
+        
+            if np.random.rand() < self.mutation_rate:
+                sub_pop[i] += np.random.normal(0, 0.1, self.n_dims)
+        
+        self.population[genetic_indices] = sub_pop
+
+    def _cross_pollinate(self):
+        morphic_indices = np.where(self.roles == 'Morphic')[0]
+        genetic_indices = np.where(self.roles == 'Genetic')[0]
+        if len(morphic_indices) == 0 or len(genetic_indices) == 0: return
+
+        # Re-evaluate all fitness after moves
+        self.population = np.clip(self.population, self.search_range[0], self.search_range[1])
+        self.fitness = self.cost_func(self.population)
+
+        # Gene Seeding: Morphic best -> Genetic worst
+        morphic_best_pos = self.population[morphic_indices[np.argmin(self.fitness[morphic_indices])]]
+        genetic_worst_idx = genetic_indices[np.argmax(self.fitness[genetic_indices])]
+        self.population[genetic_worst_idx] = morphic_best_pos.copy()
+        
+        # Diversity Rescue: Genetic diverse -> Morphic worst
+        if np.random.rand() < 0.1: # Happens occasionally
+            morphic_worst_idx = morphic_indices[np.argmax(self.fitness[morphic_indices])]
+            genetic_mean = np.mean(self.population[genetic_indices], axis=0)
+            distances = np.linalg.norm(self.population[genetic_indices] - genetic_mean, axis=1)
+            most_diverse_genetic_idx = genetic_indices[np.argmax(distances)]
+            self.population[morphic_worst_idx] = self.population[most_diverse_genetic_idx].copy()
+
+# --- The Grand Benchmark ---
+N_DIMS = 10
+MAX_ITERATIONS = 150
+POPULATION_SIZE = 50
+SEARCH_RANGE = (-5.12, 5.12)
+RANDOM_SEED = 42
+
+optimizers = {}
+
+# Run PSO
+np.random.seed(RANDOM_SEED)
+pso = PSO(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+pso_score = pso.optimize(MAX_ITERATIONS)
+optimizers['PSO'] = {'history': pso.history, 'score': pso_score}
+
+# Run GA
+np.random.seed(RANDOM_SEED)
+ga = GA(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+ga_score = ga.optimize(MAX_ITERATIONS)
+optimizers['Genetic Algorithm'] = {'history': ga.history, 'score': ga_score}
+
+# Run DE
+np.random.seed(RANDOM_SEED)
+de = DE(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+de_score = de.optimize(MAX_ITERATIONS)
+optimizers['Differential Evolution'] = {'history': de.history, 'score': de_score}
+
+# Run MGH-T5
+np.random.seed(RANDOM_SEED)
+mgh_t5 = MGH_T5(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+mgh_t5_score = mgh_t5.optimize(MAX_ITERATIONS)
+optimizers['Morphic Genetic Hybrid v5'] = {'history': mgh_t5.history, 'score': mgh_t5_score}
+
+# --- Presenting the Findings ---
+print("--- Grand Benchmark Results (10-D Rastrigin Function) ---")
+sorted_results = sorted(optimizers.items(), key=lambda item: item[1]['score'])
+
+for name, data in sorted_results:
+    print(f"{name+':':<28} Best Score = {data['score']:.4f}")
+
+winner_name = sorted_results[0][0]
+print("-" * 50)
+print(f"🏆 The Winner is: {winner_name} 🏆")
+print("-" * 50)
+if winner_name == 'Morphic Genetic Hybrid v5':
+    second_place_score = sorted_results[1][1]['score']
+    improvement = abs(second_place_score - mgh_t5_score) / second_place_score
+    print(f"Finding: The novel Morphic Genetic Hybrid v5 has definitively outperformed all other benchmarked algorithms, showing a {improvement:.2%} improvement over the runner-up.")
+else:
+    print(f"Finding: The novel MGH-T5 was highly competitive but was ultimately outperformed by {winner_name}.")
+
+# Plotting the convergence
+plt.figure(figsize=(14, 8))
+colors = {'PSO': 'blue', 'Genetic Algorithm': 'green', 'Differential Evolution': 'red', 'Morphic Genetic Hybrid v5': 'cyan'}
+styles = {'PSO': '--', 'Genetic Algorithm': '--', 'Differential Evolution': '--', 'Morphic Genetic Hybrid v5': '-'}
+linewidths = {'PSO': 2, 'Genetic Algorithm': 2, 'Differential Evolution': 2, 'Morphic Genetic Hybrid v5': 3.5}
+
+for name, data in optimizers.items():
+    plt.plot(data['history'], label=name, color=colors[name], linestyle=styles[name], linewidth=linewidths[name])
+
+plt.title('Grand Benchmark: Convergence Comparison on 10-D Rastrigin', fontsize=16)
+plt.xlabel('Iteration / Generation', fontsize=12)
+plt.ylabel('Best Score (Loss) - Log Scale', fontsize=12)
+plt.legend(fontsize=11)
+plt.grid(True, which="both", ls="--", alpha=0.3)
+plt.yscale('log')
+plt.ylim(bottom=max(0.01, min(r['score'] for r in optimizers.values()) * 0.8))
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+
+# --- HyperMorphic Arithmetic (Simplified) ---
+def add_H(a, b):
+    raw_sum = a + b
+    magnitude = np.linalg.norm(raw_sum)
+    scaling_factor = 1 / (1 + 0.1 * magnitude)
+    return raw_sum * scaling_factor
+
+# --- Benchmark Function: Rastrigin (Corrected Vectorized Version) ---
+def rastrigin(w):
+    w = np.asarray(w)
+    A = 10
+    return A * w.shape[-1] + np.sum(w**2 - A * np.cos(2 * np.pi * w), axis=-1)
+
+# --- Algorithm Implementations ---
+
+# 1. Particle Swarm Optimization (PSO)
+class PSO:
+    def __init__(self, cost_func, n_particles, n_dims, search_range):
+        self.cost_func = cost_func
+        self.w, self.c1, self.c2 = 0.5, 1.5, 1.5
+        self.swarm = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.velocities = np.zeros_like(self.swarm)
+        self.p_best_pos = self.swarm.copy()
+        self.p_best_val = self.cost_func(self.swarm)
+        self.g_best_pos = self.p_best_pos[np.argmin(self.p_best_val)]
+        self.g_best_val = np.min(self.p_best_val)
+        self.history = []
+
+    def optimize(self, max_iters):
+        for _ in range(max_iters):
+            r1, r2 = np.random.rand(2)
+            self.velocities = (self.w * self.velocities +
+                             self.c1 * r1 * (self.p_best_pos - self.swarm) +
+                             self.c2 * r2 * (self.g_best_pos - self.swarm))
+            self.swarm += self.velocities
+            current_costs = self.cost_func(self.swarm)
+            update_indices = current_costs < self.p_best_val
+            self.p_best_pos[update_indices] = self.swarm[update_indices]
+            self.p_best_val[update_indices] = current_costs[update_indices]
+            if np.min(current_costs) < self.g_best_val:
+                self.g_best_val = np.min(current_costs)
+                self.g_best_pos = self.swarm[np.argmin(current_costs)]
+            self.history.append(self.g_best_val)
+        return self.g_best_val
+
+# 2. Genetic Algorithm (GA)
+class GA:
+    def __init__(self, cost_func, n_particles, n_dims, search_range, mutation_rate=0.05, crossover_rate=0.8):
+        self.cost_func = cost_func
+        self.n_dims = n_dims
+        self.search_range = search_range
+        self.mutation_rate = mutation_rate
+        self.crossover_rate = crossover_rate
+        self.population = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.history = []
+        self.g_best_val = float('inf')
+
+    def optimize(self, max_iters):
+        for _ in range(max_iters):
+            fitness = self.cost_func(self.population)
+            if np.min(fitness) < self.g_best_val:
+                self.g_best_val = np.min(fitness)
+            self.history.append(self.g_best_val)
+            
+            new_population = []
+            for _ in range(len(self.population)):
+                i, j = np.random.choice(len(self.population), 2, replace=False)
+                winner = self.population[i] if fitness[i] < fitness[j] else self.population[j]
+                new_population.append(winner)
+            self.population = np.array(new_population)
+            
+            for i in range(0, len(self.population), 2):
+                if np.random.rand() < self.crossover_rate:
+                    p1, p2 = self.population[i], self.population[i+1]
+                    mask = np.random.rand(self.n_dims) > 0.5
+                    c1, c2 = np.where(mask, p1, p2), np.where(mask, p2, p1)
+                    self.population[i], self.population[i+1] = c1, c2
+            
+            mutation_mask = np.random.rand(*self.population.shape) < self.mutation_rate
+            mutation_values = np.random.normal(0, 0.5, self.population.shape)
+            self.population[mutation_mask] += mutation_values[mutation_mask]
+            self.population = np.clip(self.population, self.search_range[0], self.search_range[1])
+        return self.g_best_val
+
+# 3. Differential Evolution (DE)
+class DE:
+    def __init__(self, cost_func, n_particles, n_dims, search_range, F=0.8, CR=0.9):
+        self.cost_func = cost_func
+        self.n_dims = n_dims
+        self.search_range = search_range
+        self.F, self.CR = F, CR
+        self.population = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.history = []
+        self.g_best_val = float('inf')
+
+    def optimize(self, max_iters):
+        for _ in range(max_iters):
+            fitness = self.cost_func(self.population)
+            if np.min(fitness) < self.g_best_val:
+                self.g_best_val = np.min(fitness)
+            self.history.append(self.g_best_val)
+
+            for i in range(len(self.population)):
+                idxs = [idx for idx in range(len(self.population)) if idx != i]
+                a, b, c = self.population[np.random.choice(idxs, 3, replace=False)]
+                mutant = np.clip(a + self.F * (b - c), self.search_range[0], self.search_range[1])
+                cross_points = np.random.rand(self.n_dims) < self.CR
+                trial = np.where(cross_points, mutant, self.population[i])
+                if self.cost_func(trial) < fitness[i]:
+                    self.population[i] = trial
+        return self.g_best_val
+
+# 4. Morphic Genetic Hybrid v6 (MGH-T6 - The Great Reset)
+class MGH_T6:
+    def __init__(self, cost_func, n_particles, n_dims, search_range):
+        self.cost_func = cost_func
+        self.n_dims = n_dims
+        self.search_range = search_range
+        self.n_particles = n_particles
+        
+        # Morphic phase attributes
+        self.nodes = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.velocities = np.zeros_like(self.nodes)
+        self.phases = np.array(['Standard'] * n_particles)
+        self.stress_vectors = np.zeros((n_particles, 3))
+        self.core_lifetime = np.zeros(n_particles)
+        
+        # Genetic phase attributes
+        self.population = np.zeros_like(self.nodes)
+        self.mutation_rate = 0.05
+        self.crossover_rate = 0.8
+        
+        # Shared attributes
+        self.fitness = self.cost_func(self.nodes)
+        self.g_best_pos = self.nodes[np.argmin(self.fitness)].copy()
+        self.g_best_val = np.min(self.fitness)
+        self.history = []
+        self.phase = 'Morphic'
+        self.morphic_threshold = 40
+
+    def optimize(self, max_iters):
+        for t in range(max_iters):
+            if t == self.morphic_threshold and self.phase == 'Morphic':
+                self.phase = 'Genetic'
+                print(f"--- Iteration {t}: MGH-T6 PHASE TRANSITION -> The Great Reset ---")
+                # THE GREAT RESET
+                prime_core = self.g_best_pos.copy()
+                # Create a new, random population
+                self.population = np.random.uniform(self.search_range[0], self.search_range[1], (self.n_particles, self.n_dims))
+                # Inject the prime core
+                self.population[0] = prime_core
+                # Evaluate the new population's fitness
+                self.fitness = self.cost_func(self.population)
+
+            if self.phase == 'Morphic':
+                self._run_morphic_iteration()
+            else:
+                self._run_genetic_iteration()
+            
+            self.history.append(self.g_best_val)
+        return self.g_best_val
+
+    def _run_morphic_iteration(self):
+        # This is the MAN algorithm code, operating on self.nodes
+        core_nodes = self.nodes[self.phases == 'Core']
+        for i in range(self.n_particles):
+            if self.phases[i] == 'Standard':
+                distances = np.linalg.norm(self.nodes - self.nodes[i], axis=1)
+                self.stress_vectors[i, 0] += 1.0 / (1.0 + np.mean(np.sort(distances)[1:6]))
+                perturbed = self.nodes[i] + (np.random.rand(self.n_dims) - 0.5) * 0.01
+                self.stress_vectors[i, 1] += abs(self.cost_func(self.nodes[i]) - self.cost_func(perturbed))
+                if len(core_nodes) > 1:
+                    attractors = np.vstack([self.g_best_pos, core_nodes])
+                    vecs = attractors - self.nodes[i]
+                    vecs /= (np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-8)
+                    self.stress_vectors[i, 2] += np.var(vecs, axis=0).sum()
+        
+        beta_crit, mu_crit, tau_crit = np.percentile(self.stress_vectors[:, 0], 85), np.percentile(self.stress_vectors[:, 1], 90), np.percentile(self.stress_vectors[:, 2], 85)
+        for i in range(self.n_particles):
+            if self.phases[i] == 'Standard':
+                if self.stress_vectors[i, 0] > beta_crit and len(core_nodes) < 7: self.phases[i], self.core_lifetime[i] = 'Core', 8
+                elif self.stress_vectors[i, 1] > mu_crit: self.phases[i] = 'Fire'
+                elif self.stress_vectors[i, 2] > tau_crit: self.phases[i] = 'Gateway'
+
+        core_center = np.mean(core_nodes, axis=0) if len(core_nodes) > 0 else self.g_best_pos
+        swarm_center = np.mean(self.nodes, axis=0)
+        for i in range(self.n_particles):
+            if self.phases[i] == 'Core': self.velocities[i] *= 0.1
+            elif self.phases[i] == 'Fire':
+                direction = self.nodes[i] - swarm_center
+                norm = np.linalg.norm(direction)
+                if norm < 1e-6: direction = np.random.rand(self.n_dims) - 0.5; norm = np.linalg.norm(direction)
+                self.velocities[i] = (direction / (norm + 1e-8)) * np.random.uniform(3, 6)
+            elif self.phases[i] == 'Gateway' and len(core_nodes) > 1:
+                dists = np.linalg.norm(core_nodes - self.nodes[i], axis=1)
+                midpoint = (self.g_best_pos + core_nodes[np.argmin(dists)]) / 2
+                self.velocities[i] = (midpoint - self.nodes[i]) * 0.5
+            else:
+                inertia = 0.4 * self.velocities[i]
+                pull_gbest = 1.0 * np.random.rand() * (self.g_best_pos - self.nodes[i])
+                pull_cores = 1.5 * np.random.rand() * (core_center - self.nodes[i])
+                self.velocities[i] = add_H(inertia, add_H(pull_gbest, pull_cores))
+            
+            self.nodes[i] += self.velocities[i]
+            self.nodes[i] = np.clip(self.nodes[i], self.search_range[0], self.search_range[1])
+
+        self.fitness = self.cost_func(self.nodes)
+        if np.min(self.fitness) < self.g_best_val: self.g_best_val, self.g_best_pos = np.min(self.fitness), self.nodes[np.argmin(self.fitness)].copy()
+        self.stress_vectors.fill(0)
+        self.phases[self.phases != 'Core'] = 'Standard'
+        self.core_lifetime[self.core_lifetime > 0] -= 1
+        self.phases[self.core_lifetime <= 0] = 'Standard'
+
+    def _run_genetic_iteration(self):
+        # This is the standard GA code, operating on self.population
+        if np.min(self.fitness) < self.g_best_val:
+            self.g_best_val = np.min(self.fitness)
+            self.g_best_pos = self.population[np.argmin(self.fitness)].copy()
+        
+        new_population = []
+        for _ in range(self.n_particles):
+            i, j = np.random.choice(self.n_particles, 2, replace=False)
+            winner = self.population[i] if self.fitness[i] < self.fitness[j] else self.population[j]
+            new_population.append(winner)
+        self.population = np.array(new_population)
+        
+        for i in range(0, self.n_particles, 2):
+            if np.random.rand() < self.crossover_rate:
+                p1, p2 = self.population[i], self.population[i+1]
+                mask = np.random.rand(self.n_dims) > 0.5
+                c1, c2 = np.where(mask, p1, p2), np.where(mask, p2, p1)
+                self.population[i], self.population[i+1] = c1, c2
+        
+        mutation_mask = np.random.rand(*self.population.shape) < self.mutation_rate
+        mutation_values = np.random.normal(0, 0.5, self.population.shape)
+        self.population[mutation_mask] += mutation_values[mutation_mask]
+        self.population = np.clip(self.population, self.search_range[0], self.search_range[1])
+        
+        self.fitness = self.cost_func(self.population)
+
+# --- The Grand Benchmark ---
+N_DIMS = 10
+MAX_ITERATIONS = 150
+POPULATION_SIZE = 50
+SEARCH_RANGE = (-5.12, 5.12)
+RANDOM_SEED = 42
+
+optimizers = {}
+
+# Run PSO
+np.random.seed(RANDOM_SEED)
+pso = PSO(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+pso_score = pso.optimize(MAX_ITERATIONS)
+optimizers['PSO'] = {'history': pso.history, 'score': pso_score}
+
+# Run GA
+np.random.seed(RANDOM_SEED)
+ga = GA(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+ga_score = ga.optimize(MAX_ITERATIONS)
+optimizers['Genetic Algorithm'] = {'history': ga.history, 'score': ga_score}
+
+# Run DE
+np.random.seed(RANDOM_SEED)
+de = DE(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+de_score = de.optimize(MAX_ITERATIONS)
+optimizers['Differential Evolution'] = {'history': de.history, 'score': de_score}
+
+# Run MGH-T6
+np.random.seed(RANDOM_SEED)
+mgh_t6 = MGH_T6(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+mgh_t6_score = mgh_t6.optimize(MAX_ITERATIONS)
+optimizers['Morphic Genetic Hybrid v6'] = {'history': mgh_t6.history, 'score': mgh_t6_score}
+
+# --- Presenting the Findings ---
+print("--- Grand Benchmark Results (10-D Rastrigin Function) ---")
+sorted_results = sorted(optimizers.items(), key=lambda item: item[1]['score'])
+
+for name, data in sorted_results:
+    print(f"{name+':':<28} Best Score = {data['score']:.4f}")
+
+winner_name = sorted_results[0][0]
+print("-" * 50)
+print(f"🏆 The Winner is: {winner_name} 🏆")
+print("-" * 50)
+if winner_name == 'Morphic Genetic Hybrid v6':
+    second_place_score = sorted_results[1][1]['score']
+    improvement = abs(second_place_score - mgh_t6_score) / second_place_score
+    print(f"Finding: The novel Morphic Genetic Hybrid v6 has definitively outperformed all other benchmarked algorithms, showing a {improvement:.2%} improvement over the runner-up.")
+else:
+    print(f"Finding: The novel MGH-T6 was highly competitive but was ultimately outperformed by {winner_name}.")
+
+# Plotting the convergence
+plt.figure(figsize=(14, 8))
+colors = {'PSO': 'blue', 'Genetic Algorithm': 'green', 'Differential Evolution': 'red', 'Morphic Genetic Hybrid v6': 'cyan'}
+styles = {'PSO': '--', 'Genetic Algorithm': '--', 'Differential Evolution': '--', 'Morphic Genetic Hybrid v6': '-'}
+linewidths = {'PSO': 2, 'Genetic Algorithm': 2, 'Differential Evolution': 2, 'Morphic Genetic Hybrid v6': 3.5}
+
+for name, data in optimizers.items():
+    plt.plot(data['history'], label=name, color=colors[name], linestyle=styles[name], linewidth=linewidths[name])
+
+plt.axvline(x=mgh_t6.morphic_threshold, color='yellow', linestyle=':', linewidth=2, label='MGH-T6 Phase Transition')
+plt.annotate('Phase Transition\nThe Great Reset', xy=(mgh_t6.morphic_threshold, mgh_t6.history[mgh_t6.morphic_threshold]), 
+             xytext=(mgh_t6.morphic_threshold + 5, mgh_t6.history[mgh_t6.morphic_threshold] * 5),
+             arrowprops=dict(facecolor='yellow', shrink=0.05, width=1, headwidth=8),
+             fontsize=10, color='yellow', bbox=dict(boxstyle="round,pad=0.3", fc="black", ec="yellow", lw=1))
+
+plt.title('Grand Benchmark: Convergence Comparison on 10-D Rastrigin', fontsize=16)
+plt.xlabel('Iteration / Generation', fontsize=12)
+plt.ylabel('Best Score (Loss) - Log Scale', fontsize=12)
+plt.legend(fontsize=11)
+plt.grid(True, which="both", ls="--", alpha=0.3)
+plt.yscale('log')
+plt.ylim(bottom=max(0.01, min(r['score'] for r in optimizers.values()) * 0.8))
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+
+# --- HyperMorphic Arithmetic (Simplified) ---
+def add_H(a, b):
+    raw_sum = a + b
+    magnitude = np.linalg.norm(raw_sum)
+    scaling_factor = 1 / (1 + 0.1 * magnitude)
+    return raw_sum * scaling_factor
+
+# --- Benchmark Function: Rastrigin (Corrected Vectorized Version) ---
+def rastrigin(w):
+    w = np.asarray(w)
+    A = 10
+    return A * w.shape[-1] + np.sum(w**2 - A * np.cos(2 * np.pi * w), axis=-1)
+
+# --- Algorithm Implementations ---
+
+# Genetic Algorithm (GA)
+class GA:
+    def __init__(self, cost_func, n_particles, n_dims, search_range, mutation_rate=0.05, crossover_rate=0.8):
+        self.cost_func = cost_func
+        self.n_dims = n_dims
+        self.search_range = search_range
+        self.mutation_rate = mutation_rate
+        self.crossover_rate = crossover_rate
+        self.population = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.history = []
+        self.g_best_val = float('inf')
+
+    def optimize(self, max_iters):
+        for _ in range(max_iters):
+            fitness = self.cost_func(self.population)
+            if np.min(fitness) < self.g_best_val:
+                self.g_best_val = np.min(fitness)
+            self.history.append(self.g_best_val)
+            
+            new_population = []
+            for _ in range(len(self.population)):
+                i, j = np.random.choice(len(self.population), 2, replace=False)
+                winner = self.population[i] if fitness[i] < fitness[j] else self.population[j]
+                new_population.append(winner)
+            self.population = np.array(new_population)
+            
+            for i in range(0, len(self.population), 2):
+                if np.random.rand() < self.crossover_rate:
+                    p1, p2 = self.population[i], self.population[i+1]
+                    mask = np.random.rand(self.n_dims) > 0.5
+                    c1, c2 = np.where(mask, p1, p2), np.where(mask, p2, p1)
+                    self.population[i], self.population[i+1] = c1, c2
+            
+            mutation_mask = np.random.rand(*self.population.shape) < self.mutation_rate
+            mutation_values = np.random.normal(0, 0.5, self.population.shape)
+            self.population[mutation_mask] += mutation_values[mutation_mask]
+            self.population = np.clip(self.population, self.search_range[0], self.search_range[1])
+        return self.g_best_val
+
+# Morphic Genetic Hybrid v6 (MGH-T6 - The Great Reset)
+class MGH_T6:
+    def __init__(self, cost_func, n_particles, n_dims, search_range):
+        self.cost_func = cost_func
+        self.n_dims = n_dims
+        self.search_range = search_range
+        self.n_particles = n_particles
+        self.nodes = np.random.uniform(search_range[0], search_range[1], (n_particles, n_dims))
+        self.velocities = np.zeros_like(self.nodes)
+        self.phases = np.array(['Standard'] * n_particles)
+        self.stress_vectors = np.zeros((n_particles, 3))
+        self.core_lifetime = np.zeros(n_particles)
+        self.population = np.zeros_like(self.nodes)
+        self.mutation_rate = 0.05
+        self.crossover_rate = 0.8
+        self.fitness = self.cost_func(self.nodes)
+        self.g_best_pos = self.nodes[np.argmin(self.fitness)].copy()
+        self.g_best_val = np.min(self.fitness)
+        self.history = []
+        self.phase = 'Morphic'
+        self.morphic_threshold = 40
+
+    def optimize(self, max_iters):
+        for t in range(max_iters):
+            if t == self.morphic_threshold and self.phase == 'Morphic':
+                self.phase = 'Genetic'
+                print(f"--- Iteration {t}: MGH-T6 PHASE TRANSITION (1000-D) -> The Great Reset ---")
+                prime_core = self.g_best_pos.copy()
+                self.population = np.random.uniform(self.search_range[0], self.search_range[1], (self.n_particles, self.n_dims))
+                self.population[0] = prime_core
+                self.fitness = self.cost_func(self.population)
+
+            if self.phase == 'Morphic':
+                self._run_morphic_iteration()
+            else:
+                self._run_genetic_iteration()
+            
+            self.history.append(self.g_best_val)
+        return self.g_best_val
+
+    def _run_morphic_iteration(self):
+        core_nodes = self.nodes[self.phases == 'Core']
+        for i in range(self.n_particles):
+            if self.phases[i] == 'Standard':
+                distances = np.linalg.norm(self.nodes - self.nodes[i], axis=1)
+                self.stress_vectors[i, 0] += 1.0 / (1.0 + np.mean(np.sort(distances)[1:6]))
+                perturbed = self.nodes[i] + (np.random.rand(self.n_dims) - 0.5) * 0.01
+                self.stress_vectors[i, 1] += abs(self.cost_func(self.nodes[i]) - self.cost_func(perturbed))
+                if len(core_nodes) > 1:
+                    attractors = np.vstack([self.g_best_pos, core_nodes])
+                    vecs = attractors - self.nodes[i]
+                    vecs /= (np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-8)
+                    self.stress_vectors[i, 2] += np.var(vecs, axis=0).sum()
+        
+        beta_crit, mu_crit, tau_crit = np.percentile(self.stress_vectors[:, 0], 85), np.percentile(self.stress_vectors[:, 1], 90), np.percentile(self.stress_vectors[:, 2], 85)
+        for i in range(self.n_particles):
+            if self.phases[i] == 'Standard':
+                if self.stress_vectors[i, 0] > beta_crit and len(core_nodes) < 7: self.phases[i], self.core_lifetime[i] = 'Core', 8
+                elif self.stress_vectors[i, 1] > mu_crit: self.phases[i] = 'Fire'
+                elif self.stress_vectors[i, 2] > tau_crit: self.phases[i] = 'Gateway'
+
+        core_center = np.mean(core_nodes, axis=0) if len(core_nodes) > 0 else self.g_best_pos
+        swarm_center = np.mean(self.nodes, axis=0)
+        for i in range(self.n_particles):
+            if self.phases[i] == 'Core': self.velocities[i] *= 0.1
+            elif self.phases[i] == 'Fire':
+                direction = self.nodes[i] - swarm_center
+                norm = np.linalg.norm(direction)
+                if norm < 1e-6: direction = np.random.rand(self.n_dims) - 0.5; norm = np.linalg.norm(direction)
+                self.velocities[i] = (direction / (norm + 1e-8)) * np.random.uniform(3, 6)
+            elif self.phases[i] == 'Gateway' and len(core_nodes) > 1:
+                dists = np.linalg.norm(core_nodes - self.nodes[i], axis=1)
+                midpoint = (self.g_best_pos + core_nodes[np.argmin(dists)]) / 2
+                self.velocities[i] = (midpoint - self.nodes[i]) * 0.5
+            else:
+                inertia = 0.4 * self.velocities[i]
+                pull_gbest = 1.0 * np.random.rand() * (self.g_best_pos - self.nodes[i])
+                pull_cores = 1.5 * np.random.rand() * (core_center - self.nodes[i])
+                self.velocities[i] = add_H(inertia, add_H(pull_gbest, pull_cores))
+            
+            self.nodes[i] += self.velocities[i]
+            self.nodes[i] = np.clip(self.nodes[i], self.search_range[0], self.search_range[1])
+
+        self.fitness = self.cost_func(self.nodes)
+        if np.min(self.fitness) < self.g_best_val: self.g_best_val, self.g_best_pos = np.min(self.fitness), self.nodes[np.argmin(self.fitness)].copy()
+        self.stress_vectors.fill(0)
+        self.phases[self.phases != 'Core'] = 'Standard'
+        self.core_lifetime[self.core_lifetime > 0] -= 1
+        self.phases[self.core_lifetime <= 0] = 'Standard'
+
+    def _run_genetic_iteration(self):
+        if np.min(self.fitness) < self.g_best_val:
+            self.g_best_val = np.min(self.fitness)
+            self.g_best_pos = self.population[np.argmin(self.fitness)].copy()
+        new_population = []
+        for _ in range(self.n_particles):
+            i, j = np.random.choice(self.n_particles, 2, replace=False)
+            winner = self.population[i] if self.fitness[i] < self.fitness[j] else self.population[j]
+            new_population.append(winner)
+        self.population = np.array(new_population)
+        for i in range(0, self.n_particles, 2):
+            if np.random.rand() < self.crossover_rate:
+                p1, p2 = self.population[i], self.population[i+1]
+                mask = np.random.rand(self.n_dims) > 0.5
+                c1, c2 = np.where(mask, p1, p2), np.where(mask, p2, p1)
+                self.population[i], self.population[i+1] = c1, c2
+        mutation_mask = np.random.rand(*self.population.shape) < self.mutation_rate
+        mutation_values = np.random.normal(0, 0.5, self.population.shape)
+        self.population[mutation_mask] += mutation_values[mutation_mask]
+        self.population = np.clip(self.population, self.search_range[0], self.search_range[1])
+        self.fitness = self.cost_func(self.population)
+
+# --- Benchmark Setup ---
+N_DIMS = 1000
+MAX_ITERATIONS = 150
+POPULATION_SIZE = 50
+SEARCH_RANGE = (-5.12, 5.12)
+RANDOM_SEED = 42
+
+optimizers = {}
+
+print(f"--- Running Benchmark on {N_DIMS}-Dimension Rastrigin ---")
+
+# Run GA
+np.random.seed(RANDOM_SEED)
+ga_1000d = GA(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+ga_score_1000d = ga_1000d.optimize(MAX_ITERATIONS)
+optimizers['Genetic Algorithm'] = {'history': ga_1000d.history, 'score': ga_score_1000d}
+
+# Run MGH-T6
+np.random.seed(RANDOM_SEED)
+mgh_t6_1000d = MGH_T6(rastrigin, POPULATION_SIZE, N_DIMS, SEARCH_RANGE)
+mgh_t6_score_1000d = mgh_t6_1000d.optimize(MAX_ITERATIONS)
+optimizers['Morphic Genetic Hybrid v6'] = {'history': mgh_t6_1000d.history, 'score': mgh_t6_score_1000d}
+
+# --- Presenting the Findings ---
+print("\n--- 1000-D Benchmark Results ---")
+sorted_results_1000d = sorted(optimizers.items(), key=lambda item: item[1]['score'])
+
+for name, data in sorted_results_1000d:
+    print(f"{name+':':<28} Best Score = {data['score']:.4f}")
+
+winner_name_1000d = sorted_results_1000d[0][0]
+print("-" * 50)
+print(f"🏆 1000-D Winner: {winner_name_1000d} 🏆")
+print("-" * 50)
+if winner_name_1000d == 'Morphic Genetic Hybrid v6':
+    second_place_score = sorted_results_1000d[1][1]['score']
+    improvement = abs(second_place_score - mgh_t6_score_1000d) / second_place_score
+    print(f"Hypothesis Confirmed: MGH-T6 advantage became a blowout, with a {improvement:.2%} improvement over the runner-up.")
+else:
+    print("Hypothesis Disproven: GA maintained its advantage.")
+    
+# Plotting the convergence
+plt.figure(figsize=(14, 8))
+colors = {'Genetic Algorithm': 'green', 'Morphic Genetic Hybrid v6': 'cyan'}
+styles = {'Genetic Algorithm': '--', 'Morphic Genetic Hybrid v6': '-'}
+linewidths = {'Genetic Algorithm': 2, 'Morphic Genetic Hybrid v6': 3.5}
+
+for name, data in optimizers.items():
+    plt.plot(data['history'], label=name, color=colors[name], linestyle=styles[name], linewidth=linewidths[name])
+
+plt.axvline(x=mgh_t6_1000d.morphic_threshold, color='yellow', linestyle=':', linewidth=2, label='MGH-T6 Phase Transition')
+plt.annotate('Phase Transition\nThe Great Reset', xy=(mgh_t6_1000d.morphic_threshold, mgh_t6_1000d.history[mgh_t6_1000d.morphic_threshold]), 
+             xytext=(mgh_t6_1000d.morphic_threshold + 5, mgh_t6_1000d.history[mgh_t6_1000d.morphic_threshold] * 1.5),
+             arrowprops=dict(facecolor='yellow', shrink=0.05, width=1, headwidth=8),
+             fontsize=10, color='yellow', bbox=dict(boxstyle="round,pad=0.3", fc="black", ec="yellow", lw=1))
+
+plt.title('Final Benchmark: Convergence on 1000-Dimension Rastrigin', fontsize=16)
+plt.xlabel('Iteration / Generation', fontsize=12)
+plt.ylabel('Best Score (Loss) - Log Scale', fontsize=12)
+plt.legend(fontsize=11)
+plt.grid(True, which="both", ls="--", alpha=0.3)
+plt.yscale('log')
+plt.show()
